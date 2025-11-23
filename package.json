@@ -1,0 +1,46 @@
+{
+  "name": "middleware",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "import:orders": "ts-node src/scripts/importOrders.ts",
+    "worker:orders": "ts-node src/workers/ordersWorker.ts",
+    "migrate:make": "knex --knexfile knexfile.cjs migrate:make",
+    "migrate:latest": "knex --knexfile knexfile.cjs migrate:latest",
+    "start:api": "ts-node src/server.ts",
+    "migrate:rollback": "knex --knexfile knexfile.cjs migrate:rollback"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "express": "^5.1.0",
+    "knex": "^3.1.0",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "node-fetch": "^3.3.2",
+    "uuid": "^13.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.5",
+    "@types/morgan": "^1.9.10",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.10.1",
+    "@types/uuid": "^11.0.0",
+    "@types/yargs": "^17.0.35",
+    "dotenv": "^17.2.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "yargs": "^18.0.0"
+  }
+}
