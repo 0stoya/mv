@@ -1,5 +1,6 @@
-// src/magento/magentoClient.ts
 import axios, { AxiosInstance } from 'axios';
+import http from 'http';
+import https from 'https';
 import { logError } from '../utils/logger';
 
 export interface MagentoCartItemInput {
@@ -10,7 +11,6 @@ export interface MagentoOrder {
   entity_id: number;
   increment_id: string;
   status: string;
-  // add more fields later if you need them
 }
 
 export class MagentoClient {
@@ -24,21 +24,26 @@ export class MagentoClient {
     const token = process.env.MAGENTO_API_TOKEN;
 
     this.storeCode = process.env.MAGENTO_STORE_CODE || 'default';
-    this.freeShippingMethod =
-      process.env.MAGENTO_FREE_SHIPPING_METHOD || 'freeshipping';
+    this.freeShippingMethod = process.env.MAGENTO_FREE_SHIPPING_METHOD || 'freeshipping';
     this.codMethod = process.env.MAGENTO_COD_METHOD || 'cashondelivery';
 
     if (!baseUrl) throw new Error('MAGENTO_BASE_URL is not configured');
     if (!token) throw new Error('MAGENTO_API_TOKEN is not configured');
 
+    // OPTIMIZATION: Keep-Alive Agents
+    // This prevents re-negotiating SSL for every single step of the order placement
+    const httpAgent = new http.Agent({ keepAlive: true });
+    const httpsAgent = new https.Agent({ keepAlive: true });
+
     this.client = axios.create({
-      // You control whether baseUrl includes /rest or not
       baseURL: `${baseUrl}/${this.storeCode}`,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       },
-      timeout: 30000
+      timeout: 30000,
+      httpAgent,
+      httpsAgent
     });
   }
 
@@ -68,16 +73,10 @@ export class MagentoClient {
 
   async createGuestCart(): Promise<string> {
     const ctx = 'magento:createGuestCart';
-    return this.request<string>(ctx, {
-      method: 'POST',
-      url: '/V1/guest-carts'
-    });
+    return this.request<string>(ctx, { method: 'POST', url: '/V1/guest-carts' });
   }
 
-  async addItemToGuestCart(
-    cartId: string,
-    item: MagentoCartItemInput
-  ): Promise<void> {
+  async addItemToGuestCart(cartId: string, item: MagentoCartItemInput): Promise<void> {
     const ctx = 'magento:addItemToGuestCart';
     await this.request(ctx, {
       method: 'POST',
@@ -96,22 +95,12 @@ export class MagentoClient {
     const ctx = 'magento:setGuestCartAddresses';
 
     const streetLines = String(order.street || '')
-      .split('\n')
-      .map((l: string) => l.trim())
-      .filter((l: string) => l.length > 0);
+      .split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
 
-    const hasRegionId =
-      order.region_id !== undefined &&
-      order.region_id !== null &&
-      String(order.region_id).trim() !== '';
+    const hasRegionId = order.region_id && String(order.region_id).trim() !== '';
+    const hasRegionName = order.region && String(order.region).trim() !== '';
 
-    const hasRegionName =
-      order.region !== undefined &&
-      order.region !== null &&
-      String(order.region).trim() !== '';
-
-    const hasRegion = hasRegionId || hasRegionName;
-
+    // Region Mapping Logic (Argentina/UK/etc)
     const regionMap: Record<string, { code: string; name: string }> = {
       '714': { code: 'CABA', name: 'Ciudad Autónoma de Buenos Aires' },
       '715': { code: 'BA', name: 'Buenos Aires' }
@@ -129,7 +118,7 @@ export class MagentoClient {
       company: order.company || undefined
     };
 
-    if (hasRegion) {
+    if (hasRegionId || hasRegionName) {
       let regionName = hasRegionName ? String(order.region).trim() : '';
       let regionId: number | undefined;
       let regionCode: string | undefined;
@@ -168,17 +157,17 @@ export class MagentoClient {
     await this.request(ctx, {
       method: 'PUT',
       url: `/V1/guest-carts/${encodeURIComponent(cartId)}/selected-payment-method`,
-      data: {
-        method: { method: this.codMethod }
-      }
+      data: { method: { method: this.codMethod } }
     });
   }
 
   async placeGuestOrder(cartId: string): Promise<number> {
     const ctx = 'magento:placeGuestOrder';
+    // Optimization: Increased timeout for order placement as it's the heaviest operation
     return this.request<number>(ctx, {
       method: 'PUT',
-      url: `/V1/guest-carts/${encodeURIComponent(cartId)}/order`
+      url: `/V1/guest-carts/${encodeURIComponent(cartId)}/order`,
+      timeout: 60000 
     });
   }
 
@@ -188,7 +177,6 @@ export class MagentoClient {
 
   async addOrderComment(orderId: number, comment: string): Promise<void> {
     const ctx = 'magento:addOrderComment';
-
     await this.request(ctx, {
       method: 'POST',
       url: `/V1/orders/${orderId}/comments`,
@@ -209,30 +197,20 @@ export class MagentoClient {
 
   async createInvoice(orderId: number): Promise<number> {
     const ctx = 'magento:createInvoice';
-
-    const invoiceId = await this.request<number>(ctx, {
+    return this.request<number>(ctx, {
       method: 'POST',
       url: `/V1/order/${orderId}/invoice`,
-      data: {
-        capture: true
-      }
+      data: { capture: true }
     });
-
-    return invoiceId;
   }
 
   async createShipment(orderId: number): Promise<number> {
     const ctx = 'magento:createShipment';
-
-    const shipmentId = await this.request<number>(ctx, {
+    return this.request<number>(ctx, {
       method: 'POST',
       url: `/V1/order/${orderId}/ship`,
-      data: {
-        // add items/tracking here if your Magento requires it
-      }
+      data: {}
     });
-
-    return shipmentId;
   }
 
   //─────────────────────────────────────────
@@ -241,21 +219,13 @@ export class MagentoClient {
 
   async backdateOrder(orderId: number, createdAt: string): Promise<void> {
     const ctx = 'magento:backdateOrder';
-
     await this.request(ctx, {
       method: 'POST',
       url: `/V1/ostoya/orders/${orderId}/backdate`,
-      data: {
-        orderId,
-        createdAt
-      }
+      data: { orderId, createdAt }
     });
   }
 
-  /**
-   * Attach (or create) customer for an order and optionally backdate it.
-   * If createdAt is null/undefined, Magento will keep its current created_at.
-   */
   async attachCustomerAndBackdate(
     orderId: number,
     email: string,
@@ -264,55 +234,33 @@ export class MagentoClient {
     createdAt?: string | null
   ): Promise<void> {
     const ctx = 'magento:attachCustomerAndBackdate';
-
     await this.request(ctx, {
       method: 'POST',
       url: `/V1/ostoya/orders/${orderId}/attach-customer`,
-      data: {
-        orderId,
-        email,
-        firstname,
-        lastname,
-        createdAt: createdAt ?? null
-      }
+      data: { orderId, email, firstname, lastname, createdAt: createdAt ?? null }
     });
   }
 
-  async backdateInvoice(
-    invoiceId: number | string,
-    createdAt: string
-  ): Promise<void> {
+  async backdateInvoice(invoiceId: number | string, createdAt: string): Promise<void> {
     const ctx = 'magento:backdateInvoice';
-
     await this.request(ctx, {
       method: 'POST',
       url: `/V1/ostoya/invoices/${invoiceId}/backdate`,
-      data: {
-        invoiceId,
-        createdAt
-      }
+      data: { invoiceId, createdAt }
     });
   }
 
-  async backdateShipment(
-    shipmentId: number | string,
-    createdAt: string
-  ): Promise<void> {
+  async backdateShipment(shipmentId: number | string, createdAt: string): Promise<void> {
     const ctx = 'magento:backdateShipment';
-
     await this.request(ctx, {
       method: 'POST',
       url: `/V1/ostoya/shipments/${shipmentId}/backdate`,
-      data: {
-        shipmentId,
-        createdAt
-      }
+      data: { shipmentId, createdAt }
     });
   }
-  
-async getOrderById(orderId: number): Promise<MagentoOrder> {
-    const ctx = 'magento:getOrderById';
 
+  async getOrderById(orderId: number): Promise<MagentoOrder> {
+    const ctx = 'magento:getOrderById';
     return this.request<MagentoOrder>(ctx, {
       method: 'GET',
       url: `/V1/orders/${orderId}`
@@ -320,6 +268,5 @@ async getOrderById(orderId: number): Promise<MagentoOrder> {
   }
 }
 
-// Singleton instance used by services/workers
 export const magentoClient = new MagentoClient();
 export default magentoClient;
